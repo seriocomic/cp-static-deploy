@@ -1,0 +1,46 @@
+.cpsd-card {
+    max-width: 800px;
+    padding: 20px;
+}
+
+.cpsd-card-log {
+    margin-top: 20px;
+}
+
+.cpsd-log {
+    background: #23282d;
+    color: #eee;
+    padding: 15px;
+    overflow-x: auto;
+    max-height: 400px;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.cpsd-status-table tr {
+    cursor: default !important;
+}
+
+.cpsd-status-table tbody {
+    cursor: default !important;
+}
+
+.cpsd-status-table .ui-sortable-handle {
+    cursor: default !important;
+}
+
+.cpsd-actions {
+    margin-top: 15px;
+}
+
+.cpsd-actions .button {
+    margin-right: 8px;
+}
+
+.cpsd-links {
+    margin-top: 10px;
+}
+
+.cpsd-links .button {
+    margin-right: 8px;
+}
