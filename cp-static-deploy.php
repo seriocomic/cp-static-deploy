@@ -3,7 +3,7 @@
  * Plugin Name: CP Static Deploy
  * Plugin URI: https://github.com/seriocomic/cp-static-deploy
  * Description: Static site deployment for ClassicPress. Mirrors the dev site via wget, processes HTML/XML, and deploys to GitHub Pages/Cloudflare Pages via PR.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: seriocomic
  * Author URI: https://github.com/seriocomic
  * License: GPL-2.0+
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'CPSD_VERSION', '1.0.0' );
+define( 'CPSD_VERSION', '1.0.1' );
 define( 'CPSD_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'CPSD_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'CPSD_WORKING_DIR', WP_CONTENT_DIR . '/static-deploy' );

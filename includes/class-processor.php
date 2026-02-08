@@ -404,23 +404,25 @@ class CPSD_Processor {
             return false;
         }
 
-        // 3. Rewrite URLs in HTML
-        $this->rewrite_urls_html( $build_dir );
-
-        // 4. Rewrite URLs in XML/RSS
-        $this->rewrite_urls_xml( $build_dir );
-
-        // 5. Process feeds (update GUIDs, rename)
+        // 3. Process feeds (update GUIDs, convert feed/index.html → all.rss)
+        //    Must happen before HTML rewriting, because wget saves the RSS feed
+        //    as feed/index.html and the HTML rewriter would corrupt the XML.
         $this->process_feeds( $build_dir );
 
-        // 6. Generate robots.txt
+        // 4. Clean old feed files (remove feed/index.html before HTML rewriter sees it)
+        $this->clean_old_files( $build_dir );
+
+        // 5. Rewrite URLs in HTML
+        $this->rewrite_urls_html( $build_dir );
+
+        // 6. Rewrite URLs in XML/RSS (handles domain swap in all.rss)
+        $this->rewrite_urls_xml( $build_dir );
+
+        // 7. Generate robots.txt
         $this->generate_robots_txt( $build_dir );
 
-        // 7. Copy README
+        // 8. Copy README
         $this->copy_readme( $build_dir );
-
-        // 8. Clean old feed files
-        $this->clean_old_files( $build_dir );
 
         // 9. Copy to repo
         if ( ! $this->copy_to_repo( $build_dir, $repo_dir ) ) {

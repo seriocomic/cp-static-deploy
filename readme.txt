@@ -5,7 +5,7 @@ Requires at least: 1.0.0
 Tested up to: 2.0.0
 Requires CP: 1.0.0
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -136,6 +136,9 @@ Yes, the plugin is compatible with both ClassicPress and WordPress 4.9+.
 3. Prerequisites check showing system requirements status
 
 == Changelog ==
+
+= 1.0.1 =
+* Fix RSS feed not updating on selective builds - reorder post-processing pipeline so feed conversion (index.html to all.rss) runs before HTML rewriting, preventing XML corruption
 
 = 1.0.0 =
 * Initial release
