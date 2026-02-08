@@ -44,3 +44,40 @@
 .cpsd-links .button {
     margin-right: 8px;
 }
+
+#tab-help pre {
+    background: #f0f0f1;
+    border: 1px solid #c3c4c7;
+    padding: 12px 15px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+#tab-help code {
+    font-size: 12px;
+}
+
+#tab-help pre code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+#tab-help hr {
+    margin: 25px 0;
+    border: none;
+    border-top: 1px solid #c3c4c7;
+}
+
+#tab-help h3 {
+    margin-top: 25px;
+}
+
+#tab-help ol li {
+    margin-bottom: 12px;
+}
+
+#tab-help table td {
+    font-size: 13px;
+}

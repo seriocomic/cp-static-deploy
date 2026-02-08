@@ -22,6 +22,7 @@ if ( ! defined( 'ABSPATH' ) ) {
         <a href="#tab-github" class="nav-tab" data-tab="github">GitHub</a>
         <a href="#tab-build" class="nav-tab" data-tab="build">Build</a>
         <a href="#tab-prerequisites" class="nav-tab" data-tab="prerequisites">Prerequisites</a>
+        <a href="#tab-help" class="nav-tab" data-tab="help">Help</a>
     </h2>
 
     <form method="post" action="">
@@ -72,6 +73,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
         <!-- GitHub Tab -->
         <div class="cpsd-tab" id="tab-github" style="display:none;">
+            <div class="notice notice-info" style="margin: 15px 0; padding: 12px;">
+                <p><strong>External API Usage & Consent:</strong> By configuring a GitHub Personal Access Token below, you authorize this plugin to communicate with GitHub's API (api.github.com) to create and manage pull requests for your static site deployments. The plugin will transmit repository metadata (branch names, commit messages, PR titles) to GitHub's servers. Your token is stored encrypted and only used for GitHub API calls. <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank">GitHub's Privacy Policy</a></p>
+            </div>
             <table class="form-table">
                 <tr>
                     <th><label for="cpsd_github_repo">Repository</label></th>
@@ -184,12 +188,193 @@ if ( ! defined( 'ABSPATH' ) ) {
             </p>
         </div>
 
-        <?php submit_button( 'Save Settings' ); ?>
+        <!-- Help Tab -->
+        <div class="cpsd-tab" id="tab-help" style="display:none;">
+            <div style="max-width: 800px;">
+
+                <h3>Setup Checklist</h3>
+                <p>Complete these steps in order before triggering the first deploy. Each step can be verified on the <strong>Prerequisites</strong> tab.</p>
+                <ol>
+                    <li><strong>Install the plugin</strong> &mdash; Upload to <code>wp-content/plugins/</code> and activate. The working directory (<code>wp-content/static-deploy/</code>) is created automatically.</li>
+                    <li><strong>Set working directory permissions</strong> &mdash; The deploy user must own the directory, and the web server group must have read/write access for logs and status:
+                        <pre><code>sudo chown -R DEPLOY_USER:www-data /path/to/wp-content/static-deploy
+sudo chmod -R 775 /path/to/wp-content/static-deploy</code></pre>
+                    </li>
+                    <li><strong>Clone the git repository</strong> &mdash; Clone the static site repo into the working directory as the deploy user:
+                        <pre><code>cd /path/to/wp-content/static-deploy
+sudo -u DEPLOY_USER git clone git@github.com:owner/repo.git repo
+cd repo
+sudo -u DEPLOY_USER git checkout staging
+sudo -u DEPLOY_USER git config user.name "Deploy Bot"
+sudo -u DEPLOY_USER git config user.email "deploy@example.com"</code></pre>
+                    </li>
+                    <li><strong>Configure SSH key</strong> &mdash; The deploy user needs an SSH key registered as a GitHub deploy key (with write access) for git push:
+                        <pre><code># Generate key (as deploy user)
+sudo -u DEPLOY_USER ssh-keygen -t ed25519 -f ~/.ssh/id_deploy -N ""
+
+# Add public key to GitHub repo > Settings > Deploy keys
+# Test: sudo -u DEPLOY_USER ssh -T git@github.com</code></pre>
+                    </li>
+                    <li><strong>Configure sudoers</strong> &mdash; Allow the web server to run the deploy script as the deploy user (see Sudoers section below).</li>
+                    <li><strong>Configure plugin settings</strong> &mdash; Fill in Source URL, Production URL, GitHub repo, and token on the General and GitHub tabs.</li>
+                    <li><strong>Create GitHub label</strong> &mdash; Create an <code>auto-merge</code> label in the GitHub repo (Issues &gt; Labels &gt; New label).</li>
+                    <li><strong>Add GitHub Actions workflow</strong> &mdash; Create <code>.github/workflows/auto-merge.yml</code> in the static site repo (see GitHub Actions section below).</li>
+                </ol>
+
+                <hr />
+
+                <h3>Sudoers Configuration</h3>
+                <p><strong>Why:</strong> ClassicPress runs as <code>www-data</code>. The deploy process must run as the deploy user (the user configured in General settings) because that user owns the working directory, the git repo, and the SSH keys for pushing to GitHub. The sudoers entry allows <code>www-data</code> to execute the deploy script as the deploy user without a password prompt.</p>
+                <p><strong>What gets allowed:</strong> Two specific commands &mdash; the deploy script itself, and <code>/usr/bin/true</code> (used by the Prerequisites check to verify sudo is configured).</p>
+                <pre><code># Create the sudoers file (replace DEPLOY_USER and paths)
+echo 'www-data ALL=(DEPLOY_USER) NOPASSWD: /usr/bin/bash /path/to/wp-content/static-deploy/run-deploy.sh, /usr/bin/true' \
+  | sudo tee /etc/sudoers.d/static-deploy
+
+# Required: set permissions (sudo ignores files that aren't 0440)
+sudo chmod 440 /etc/sudoers.d/static-deploy
+
+# Required: validate syntax
+sudo visudo -cf /etc/sudoers.d/static-deploy
+# Expected output: parsed OK</code></pre>
+                <p><strong>Verify:</strong></p>
+                <pre><code># Should produce no output and exit 0
+sudo -u www-data sudo -n -u DEPLOY_USER true</code></pre>
+
+                <hr />
+
+                <h3>GitHub Actions Workflow</h3>
+                <p>Create this file at <code>.github/workflows/auto-merge.yml</code> in the static site repository. It automatically merges PRs that have the <code>auto-merge</code> label.</p>
+                <pre><code>name: Auto-Merge Staging to Master
+
+on:
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'auto-merge') &&
+      github.event.pull_request.base.ref == 'master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lewagon/wait-on-check-action@v1.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: 'auto-merge'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success,skipped,neutral
+        continue-on-error: true
+      - uses: pascalgn/automerge-action@v0.16.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_LABELS: "auto-merge"
+          MERGE_METHOD: "squash"
+          MERGE_COMMIT_MESSAGE: "pull-request-title"
+          MERGE_DELETE_BRANCH: false
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: auto-merge
+    if: failure()
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Auto-merge failed. Check workflow logs and merge manually.'
+            })</code></pre>
+
+                <hr />
+
+                <h3>Troubleshooting</h3>
+                <table class="widefat striped" style="max-width: 800px;">
+                    <thead>
+                        <tr><th>Problem</th><th>Cause</th><th>Solution</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Prerequisites: "Sudo not configured"</td>
+                            <td>No sudoers entry, or entry is missing <code>/usr/bin/true</code></td>
+                            <td>Create <code>/etc/sudoers.d/static-deploy</code> as shown above. Include both the deploy script path and <code>/usr/bin/true</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>Deploy triggered but nothing happens</td>
+                            <td>Lock file from previous failed deploy, or permission error</td>
+                            <td>Check <code>logs/trigger.log</code>. Delete <code>.lock</code> if no deploy is running. Verify directory permissions (775, owned by deploy user).</td>
+                        </tr>
+                        <tr>
+                            <td>Deploy stuck / lock file persists</td>
+                            <td>Deploy process crashed or timed out</td>
+                            <td>Check if process is running: <code>ps aux | grep run-deploy</code>. If not, delete the <code>.lock</code> file and retry.</td>
+                        </tr>
+                        <tr>
+                            <td>PR not auto-merging</td>
+                            <td>Missing label, no Actions workflow, or workflow error</td>
+                            <td>Verify <code>auto-merge</code> label exists in the repo. Check that <code>.github/workflows/auto-merge.yml</code> exists. Review Actions tab for errors.</td>
+                        </tr>
+                        <tr>
+                            <td>wget fails or times out</td>
+                            <td>Source URL unreachable, disk full, or SSL error</td>
+                            <td>Test with <code>curl -I SOURCE_URL</code>. Check disk space. Add <code>--no-check-certificate</code> to wget args for self-signed certs.</td>
+                        </tr>
+                        <tr>
+                            <td>GitHub API error in deploy log</td>
+                            <td>Expired token, wrong repo format, or network issue</td>
+                            <td>Update the token on the GitHub tab. Verify repo is in <code>owner/repo</code> format. Test connection from Prerequisites tab.</td>
+                        </tr>
+                        <tr>
+                            <td>Git push rejected</td>
+                            <td>SSH key not configured or not authorized</td>
+                            <td>Test: <code>sudo -u DEPLOY_USER ssh -T git@github.com</code>. Verify the deploy key has write access in GitHub.</td>
+                        </tr>
+                        <tr>
+                            <td>"No changes detected" on every deploy</td>
+                            <td>REST API not returning modified content</td>
+                            <td>Delete <code>.last-build-time</code> to force a full rebuild. Verify the REST API is accessible at <code>SOURCE_URL/wp-json/wp/v2/posts</code>.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <hr />
+
+                <h3>FAQ</h3>
+
+                <p><strong>What is the deploy user?</strong><br />
+                A system user that owns the working directory and has SSH access to GitHub. The web server (<code>www-data</code>) delegates to this user via sudo for deploy operations.</p>
+
+                <p><strong>Why are two branches needed?</strong><br />
+                The <code>staging</code> branch receives automated commits from each deploy. A PR is created from staging to the production branch (e.g. <code>master</code>), providing an audit trail and allowing GitHub Actions to auto-merge. The hosting platform (Cloudflare Pages, GitHub Pages) deploys from the production branch.</p>
+
+                <p><strong>What is selective vs full build?</strong><br />
+                Selective builds query the WordPress REST API for content modified since the last deploy, then only download those specific URLs plus dependencies (homepage, feeds, archives). If more items changed than the threshold setting, or no previous build exists, a full wget mirror is used instead.</p>
+
+                <p><strong>Where are the logs?</strong><br />
+                Deploy logs are at <code>wp-content/static-deploy/logs/deploy.log</code> (main pipeline) and <code>trigger.log</code> (ClassicPress events). Both are viewable from <strong>Tools &gt; Static Deploy</strong>.</p>
+
+                <p><strong>How is the GitHub token stored?</strong><br />
+                Encrypted with AES-256-CBC using keys derived from <code>AUTH_KEY</code> and <code>AUTH_SALT</code> in <code>wp-config.php</code>. The token is only decrypted in memory when needed for API calls.</p>
+
+                <p><strong>Can deploys be triggered from the command line?</strong><br />
+                Yes: <code>bash /path/to/wp-content/static-deploy/run-deploy.sh</code> (run as the deploy user). The admin status page detects externally triggered deploys automatically.</p>
+
+            </div>
+        </div>
+
+        <div id="cpsd-submit-wrap">
+            <?php submit_button( 'Save Settings' ); ?>
+        </div>
     </form>
 </div>
 
 <script>
 jQuery(document).ready(function($) {
+    var noSubmitTabs = ['prerequisites', 'help'];
+
     $('.nav-tab').on('click', function(e) {
         e.preventDefault();
         var tab = $(this).data('tab');
@@ -197,6 +382,12 @@ jQuery(document).ready(function($) {
         $(this).addClass('nav-tab-active');
         $('.cpsd-tab').hide();
         $('#tab-' + tab).show();
+
+        if (noSubmitTabs.indexOf(tab) !== -1) {
+            $('#cpsd-submit-wrap').hide();
+        } else {
+            $('#cpsd-submit-wrap').show();
+        }
     });
 });
 </script>

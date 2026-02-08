@@ -4,10 +4,14 @@
  * Plugin URI: https://github.com/seriocomic/cp-static-deploy
  * Description: Static site deployment for ClassicPress. Mirrors the dev site via wget, processes HTML/XML, and deploys to GitHub Pages/Cloudflare Pages via PR.
  * Version: 1.0.0
- * Author: Mike
+ * Author: seriocomic
+ * Author URI: https://github.com/seriocomic
  * License: GPL-2.0+
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 7.4
+ * Requires CP: 1.0.0
  * Requires at least: 1.0.0
+ * Text Domain: cp-static-deploy
  */
 
 if ( ! defined( 'ABSPATH' ) ) {

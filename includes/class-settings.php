@@ -25,7 +25,7 @@ class CPSD_Settings {
         'github_token'          => array( 'default' => '', 'type' => 'password', 'label' => 'GitHub Token', 'description' => 'Personal Access Token with repo scope. Stored encrypted.' ),
         'git_staging_branch'    => array( 'default' => 'staging', 'type' => 'text', 'label' => 'Staging Branch', 'description' => 'Git branch for deploy commits' ),
         'git_production_branch' => array( 'default' => 'master', 'type' => 'text', 'label' => 'Production Branch', 'description' => 'Git branch that PRs merge into' ),
-        'deploy_user'           => array( 'default' => '', 'type' => 'text', 'label' => 'Deploy User', 'description' => 'System user that runs deploy (e.g. webmin). Must have write access to working directory.' ),
+        'deploy_user'           => array( 'default' => '', 'type' => 'text', 'label' => 'Deploy User', 'description' => 'System user that runs deploy. Must have write access to working directory and SSH key access to GitHub.' ),
         'cache_clean_pages'     => array( 'default' => 'index.html,about/index.html,archives/index.html,contact/index.html', 'type' => 'textarea', 'label' => 'Cache Clean Pages', 'description' => 'Comma-separated paths to clean from wget cache before each build' ),
         'robots_txt'            => array( 'default' => "User-Agent: *\nSitemap: {{production_url}}/sitemap.xml", 'type' => 'textarea', 'label' => 'Robots.txt Content', 'description' => 'Content for robots.txt. Use {{production_url}} as placeholder.' ),
         'selective_threshold'   => array( 'default' => '100', 'type' => 'number', 'label' => 'Selective Threshold', 'description' => 'Maximum changed items before using full rebuild instead of selective' ),
