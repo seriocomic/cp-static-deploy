@@ -3,7 +3,7 @@
  * Plugin Name: CP Static Deploy
  * Plugin URI: https://github.com/seriocomic/cp-static-deploy
  * Description: Static site deployment for ClassicPress. Mirrors the dev site via wget, processes HTML/XML, and deploys to GitHub Pages/Cloudflare Pages via PR.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: seriocomic
  * Author URI: https://github.com/seriocomic
  * License: GPL-2.0+
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'CPSD_VERSION', '1.0.1' );
+define( 'CPSD_VERSION', '1.0.2' );
 define( 'CPSD_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'CPSD_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'CPSD_WORKING_DIR', WP_CONTENT_DIR . '/static-deploy' );
@@ -57,6 +57,7 @@ class CP_Static_Deploy {
         }
 
         add_action( 'cpsd_check_deploy_result', array( $this->admin, 'check_deploy_result' ) );
+        add_action( 'rest_api_init', array( $this, 'register_rest_fields' ) );
     }
 
     /**
@@ -128,6 +129,43 @@ class CP_Static_Deploy {
             remove_action( 'publish_page', array( $this, 'handle_publish' ), 10 );
             $this->admin->trigger_deploy( $post_id, $post_after );
         }
+    }
+
+    /**
+     * Register custom REST API query parameters.
+     */
+    public function register_rest_fields() {
+        $post_types = array( 'post', 'page' );
+
+        foreach ( $post_types as $post_type ) {
+            add_filter( "rest_{$post_type}_query", array( $this, 'filter_rest_query_by_modified_date' ), 10, 2 );
+        }
+    }
+
+    /**
+     * Filter REST API queries to support modified_after parameter.
+     *
+     * @param array           $args    WP_Query arguments.
+     * @param WP_REST_Request $request REST API request.
+     * @return array Modified query arguments.
+     */
+    public function filter_rest_query_by_modified_date( $args, $request ) {
+        if ( isset( $request['modified_after'] ) ) {
+            $modified_after = $request['modified_after'];
+
+            // Validate ISO 8601 format (YYYY-MM-DDTHH:MM:SS)
+            if ( preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', $modified_after ) ) {
+                $args['date_query'] = array(
+                    array(
+                        'column' => 'post_modified_gmt',
+                        'after'  => $modified_after,
+                        'inclusive' => false,
+                    ),
+                );
+            }
+        }
+
+        return $args;
     }
 }
 
