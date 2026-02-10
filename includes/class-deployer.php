@@ -119,11 +119,112 @@ class CPSD_Deployer {
     }
 
     /**
-     * Detect changes via WordPress REST API.
+     * Detect changes via direct database query (fallback to REST API if needed).
      *
      * @return array|false Array with change data, or false on failure.
      */
     private function detect_changes() {
+        // Try database method first, fallback to REST API if it fails
+        $result = $this->detect_changes_via_database();
+
+        if ( false === $result ) {
+            $this->log( 'Database method failed, falling back to REST API...' );
+            $result = $this->detect_changes_via_rest_api();
+        }
+
+        return $result;
+    }
+
+    /**
+     * Detect changes via direct database query.
+     *
+     * @return array|false Array with change data, or false on failure.
+     */
+    private function detect_changes_via_database() {
+        global $wpdb;
+
+        // Read last build timestamp
+        $is_first_build = false;
+        if ( file_exists( $this->timestamp_file ) ) {
+            $last_build = trim( file_get_contents( $this->timestamp_file ) );
+            $this->log( "Last build: $last_build" );
+        } else {
+            $last_build = '1970-01-01T00:00:00';
+            $is_first_build = true;
+            $this->log( 'First build - will do full mirror' );
+        }
+
+        $this->log( 'Checking for changed content via database...' );
+
+        try {
+            // Query database directly for changed posts/pages
+            $last_build_mysql = str_replace( 'T', ' ', $last_build );
+
+            // Get changed posts
+            $posts = $wpdb->get_results( $wpdb->prepare(
+                "SELECT ID, post_name, post_type, post_modified_gmt
+                FROM {$wpdb->posts}
+                WHERE post_type = 'post'
+                AND post_status = 'publish'
+                AND post_modified_gmt > %s
+                ORDER BY post_modified_gmt DESC
+                LIMIT 100",
+                $last_build_mysql
+            ) );
+
+            // Get changed pages
+            $pages = $wpdb->get_results( $wpdb->prepare(
+                "SELECT ID, post_name, post_type, post_modified_gmt
+                FROM {$wpdb->posts}
+                WHERE post_type = 'page'
+                AND post_status = 'publish'
+                AND post_modified_gmt > %s
+                ORDER BY post_modified_gmt DESC
+                LIMIT 100",
+                $last_build_mysql
+            ) );
+
+            // Convert to URLs
+            $post_urls = array();
+            foreach ( $posts as $post ) {
+                $url = get_permalink( $post->ID );
+                if ( $url ) {
+                    $post_urls[] = $url;
+                }
+            }
+
+            $page_urls = array();
+            foreach ( $pages as $page ) {
+                $url = get_permalink( $page->ID );
+                if ( $url ) {
+                    $page_urls[] = $url;
+                }
+            }
+
+            $all_urls = array_merge( $post_urls, $page_urls );
+            $this->log( sprintf( 'Database returned %d posts, %d pages', count( $post_urls ), count( $page_urls ) ) );
+
+            return array(
+                'urls'        => $all_urls,
+                'posts'       => $post_urls,
+                'pages'       => $page_urls,
+                'posts_count' => count( $post_urls ),
+                'pages_count' => count( $page_urls ),
+                'total'       => count( $all_urls ),
+                'is_first_build' => $is_first_build,
+            );
+        } catch ( \Exception $e ) {
+            $this->log( 'Database query error: ' . $e->getMessage() );
+            return false;
+        }
+    }
+
+    /**
+     * Detect changes via WordPress REST API (fallback method).
+     *
+     * @return array|false Array with change data, or false on failure.
+     */
+    private function detect_changes_via_rest_api() {
         $source_url = $this->settings->get( 'source_url' );
 
         if ( empty( $source_url ) ) {
@@ -137,14 +238,12 @@ class CPSD_Deployer {
         $is_first_build = false;
         if ( file_exists( $this->timestamp_file ) ) {
             $last_build = trim( file_get_contents( $this->timestamp_file ) );
-            $this->log( "Last build: $last_build" );
         } else {
             $last_build = '1970-01-01T00:00:00';
             $is_first_build = true;
-            $this->log( 'First build - will do full mirror' );
         }
 
-        $this->log( 'Checking for changed content via WordPress API...' );
+        $this->log( 'Checking for changed content via REST API...' );
 
         // Query for changed posts
         $posts_url = sprintf( '%s/posts?modified_after=%s&per_page=100', $api_base, urlencode( $last_build ) );
@@ -183,6 +282,18 @@ class CPSD_Deployer {
             'timeout'   => 30,
             'sslverify' => false,
         );
+
+        // Workaround: If accessing own hostname, use localhost with Host header
+        $source_url = $this->settings->get( 'source_url' );
+        if ( ! empty( $source_url ) && strpos( $url, $source_url ) === 0 ) {
+            $parsed = parse_url( $source_url );
+            if ( ! empty( $parsed['host'] ) ) {
+                // Replace hostname with 127.0.0.1 for local access
+                $url = str_replace( $parsed['host'], '127.0.0.1', $url );
+                // Add Host header to ensure correct vhost matching
+                $args['headers'] = array( 'Host' => $parsed['host'] );
+            }
+        }
 
         $response = wp_remote_get( $url, $args );
 
