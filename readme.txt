@@ -137,6 +137,18 @@ Yes, the plugin is compatible with both ClassicPress and WordPress 4.9+.
 
 == Changelog ==
 
+= 1.0.3 =
+* Fix: Use database query for change detection with REST API fallback
+* Switch to direct database queries for detecting changed posts/pages
+* Bypasses Apache/HTTP issues when server accesses itself internally
+* Maintains REST API as fallback method for reliability
+* Resolves HTTP 404 errors when accessing WordPress REST API via localhost
+
+= 1.0.2 =
+* Fix: Add REST API support for modified_after parameter
+* Register custom query parameter with WordPress REST API
+* Enable filtering posts by modification date via REST API
+
 = 1.0.1 =
 * Fix RSS feed not updating on selective builds - reorder post-processing pipeline so feed conversion (index.html to all.rss) runs before HTML rewriting, preventing XML corruption
 
