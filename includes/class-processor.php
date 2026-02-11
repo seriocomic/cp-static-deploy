@@ -502,10 +502,20 @@ class CPSD_Processor {
      * @return bool True on success.
      */
     public function run_pipeline( $build_dir, $repo_dir, $selective_urls = null ) {
-        // 1. Clean wget cache
+        // 1. Clean build directory for full rebuilds to force fresh download
+        if ( null === $selective_urls ) {
+            $source_domain = $this->settings->get_source_domain();
+            $site_dir = $build_dir . '/' . $source_domain;
+            if ( is_dir( $site_dir ) ) {
+                $this->log( 'Cleaning build directory for full rebuild...' );
+                exec( sprintf( 'rm -rf %s 2>/dev/null', escapeshellarg( $site_dir ) ) );
+            }
+        }
+
+        // 2. Clean wget cache
         $this->clean_wget_cache( $build_dir );
 
-        // 2. Mirror site
+        // 3. Mirror site
         if ( ! $this->mirror_site( $build_dir, $selective_urls ) ) {
             return false;
         }
