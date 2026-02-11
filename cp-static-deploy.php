@@ -74,6 +74,7 @@ class CP_Static_Deploy {
         foreach ( $dirs as $dir ) {
             if ( ! is_dir( $dir ) ) {
                 wp_mkdir_p( $dir );
+                @chmod( $dir, 0775 );
             }
         }
 

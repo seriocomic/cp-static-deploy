@@ -51,6 +51,9 @@ $time_ago = $last_deploy ? human_time_diff( $last_deploy, time() ) . ' ago' : ''
             <button type="button" id="cpsd-deploy-btn" class="button button-primary" <?php echo $is_running ? 'disabled' : ''; ?>>
                 Trigger Manual Deploy
             </button>
+            <button type="button" id="cpsd-full-deploy-btn" class="button button-secondary" <?php echo $is_running ? 'disabled' : ''; ?>>
+                Force Full Rebuild
+            </button>
             <button type="button" id="cpsd-refresh-btn" class="button">
                 Refresh Status
             </button>
@@ -85,6 +88,7 @@ jQuery(document).ready(function($) {
     var refreshInterval = null;
     var completionInterval = null;
     var deployNonce = '<?php echo esc_js( wp_create_nonce( 'cpsd_deploy' ) ); ?>';
+    var fullDeployNonce = '<?php echo esc_js( wp_create_nonce( 'cpsd_full_deploy' ) ); ?>';
     var statusNonce = '<?php echo esc_js( wp_create_nonce( 'cpsd_status' ) ); ?>';
 
     function refreshStatus() {
@@ -98,6 +102,7 @@ jQuery(document).ready(function($) {
                 $('#cpsd-last-deploy-time').parent().html(d.last_deploy_html);
                 $('#cpsd-deploy-log').text(d.logs);
                 $('#cpsd-deploy-btn').prop('disabled', d.is_running);
+                $('#cpsd-full-deploy-btn').prop('disabled', d.is_running);
 
                 if (d.last_result_message) {
                     if ($('#cpsd-last-result').length === 0) {
@@ -132,7 +137,9 @@ jQuery(document).ready(function($) {
         if (!confirm('Trigger a manual deploy now?')) return;
 
         var $btn = $(this);
+        var $fullBtn = $('#cpsd-full-deploy-btn');
         $btn.prop('disabled', true).text('Deploying...');
+        $fullBtn.prop('disabled', true);
         $('#cpsd-deploy-status').html('<span style="color: #d63638;">Build starting...</span>');
 
         $.post(ajaxurl, {
@@ -147,6 +154,33 @@ jQuery(document).ready(function($) {
             } else {
                 alert('Error: ' + response.data);
                 $btn.prop('disabled', false).text('Trigger Manual Deploy');
+                $fullBtn.prop('disabled', false);
+            }
+        });
+    });
+
+    $('#cpsd-full-deploy-btn').on('click', function() {
+        if (!confirm('Force a full site rebuild? This will mirror the entire site (~30 minutes) instead of just changed content.')) return;
+
+        var $btn = $(this);
+        var $deployBtn = $('#cpsd-deploy-btn');
+        $btn.prop('disabled', true).text('Full Rebuilding...');
+        $deployBtn.prop('disabled', true);
+        $('#cpsd-deploy-status').html('<span style="color: #d63638;">Full rebuild starting...</span>');
+
+        $.post(ajaxurl, {
+            action: 'cpsd_manual_full_deploy',
+            _ajax_nonce: fullDeployNonce
+        }, function(response) {
+            if (response.success) {
+                $('#cpsd-deploy-status').html('<span style="color: #d63638;">Full rebuild in progress...</span>');
+                $('#cpsd-last-deploy-time').parent().html(response.data.time_html);
+                startAutoRefresh();
+                completionInterval = setInterval(refreshStatus, 3000);
+            } else {
+                alert('Error: ' + response.data);
+                $btn.prop('disabled', false).text('Force Full Rebuild');
+                $deployBtn.prop('disabled', false);
             }
         });
     });

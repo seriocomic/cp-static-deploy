@@ -28,6 +28,7 @@ class CPSD_Admin {
 
         // AJAX handlers
         add_action( 'wp_ajax_cpsd_manual_deploy', array( $this, 'ajax_manual_deploy' ) );
+        add_action( 'wp_ajax_cpsd_manual_full_deploy', array( $this, 'ajax_manual_full_deploy' ) );
         add_action( 'wp_ajax_cpsd_get_status', array( $this, 'ajax_get_status' ) );
         add_action( 'wp_ajax_cpsd_test_github', array( $this, 'ajax_test_github' ) );
     }
@@ -157,6 +158,52 @@ class CPSD_Admin {
     }
 
     /**
+     * AJAX handler for manual full deploy.
+     */
+    public function ajax_manual_full_deploy() {
+        check_ajax_referer( 'cpsd_full_deploy', '_ajax_nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( 'Permission denied' );
+        }
+
+        $deployer = new CPSD_Deployer( $this->settings );
+
+        if ( $deployer->is_running() ) {
+            wp_send_json_error( 'Deploy already in progress' );
+        }
+
+        // Delete timestamp file to force full rebuild
+        $timestamp_file = CPSD_WORKING_DIR . '/.last-build-time';
+        $timestamp_deleted = false;
+        if ( file_exists( $timestamp_file ) ) {
+            $timestamp_deleted = unlink( $timestamp_file );
+        }
+
+        if ( $timestamp_deleted ) {
+            $this->trigger_log( 'Manual FULL deploy triggered from admin panel (timestamp file deleted)' );
+            $this->write_deploy_log( 'FULL REBUILD requested - timestamp file deleted, will mirror entire site' );
+        } else {
+            $this->trigger_log( 'Manual FULL deploy triggered from admin panel (timestamp file not found - will be full rebuild anyway)' );
+            $this->write_deploy_log( 'FULL REBUILD requested - no previous build found, will mirror entire site' );
+        }
+
+        $this->start_background_deploy();
+
+        $now = time();
+        update_option( self::OPTION_LAST_DEPLOY, $now );
+        delete_option( self::OPTION_LAST_RESULT );
+        $this->schedule_result_check();
+
+        $time_display = wp_date( 'Y-m-d H:i:s', $now );
+
+        wp_send_json_success( array(
+            'time'      => $time_display,
+            'time_html' => '<strong>' . esc_html( $time_display ) . '</strong> <span style="color: #666;">(just now)</span>',
+        ) );
+    }
+
+    /**
      * AJAX handler for status refresh.
      */
     public function ajax_get_status() {
@@ -264,6 +311,9 @@ class CPSD_Admin {
         $deploy_user = $this->settings->get( 'deploy_user' );
         $wrapper     = CPSD_WORKING_DIR . '/run-deploy.sh';
 
+        // Write immediate feedback to deploy log
+        $this->write_deploy_log( 'Deploy triggered from admin panel, starting background process...' );
+
         if ( ! empty( $deploy_user ) && file_exists( $wrapper ) ) {
             $command = sprintf(
                 'sudo -u %s bash %s > /dev/null 2>&1 &',
@@ -284,6 +334,7 @@ class CPSD_Admin {
             $this->schedule_result_check();
         } else {
             $this->trigger_log( "ERROR: Failed to trigger deploy script (exit code: $return_var)" );
+            $this->write_deploy_log( "ERROR: Failed to trigger deploy script (exit code: $return_var)" );
         }
     }
 
@@ -375,14 +426,65 @@ class CPSD_Admin {
      * Log to trigger log file.
      */
     private function trigger_log( $message ) {
-        $timestamp = date( 'Y-m-d H:i:s' );
+        $timestamp = wp_date( 'Y-m-d H:i:s' );
         $line = sprintf( "[%s] %s\n", $timestamp, $message );
 
         $log_dir = dirname( $this->trigger_log );
         if ( ! is_dir( $log_dir ) ) {
             wp_mkdir_p( $log_dir );
+            $this->fix_permissions( $log_dir );
         }
 
         file_put_contents( $this->trigger_log, $line, FILE_APPEND | LOCK_EX );
+        $this->fix_permissions( $this->trigger_log );
+    }
+
+    /**
+     * Write directly to the deploy log file for immediate user feedback.
+     */
+    private function write_deploy_log( $message ) {
+        $deploy_log = CPSD_WORKING_DIR . '/logs/deploy.log';
+        $timestamp = wp_date( 'Y-m-d H:i:s' );
+        $line = sprintf( "[%s] %s\n", $timestamp, $message );
+
+        $log_dir = dirname( $deploy_log );
+        if ( ! is_dir( $log_dir ) ) {
+            wp_mkdir_p( $log_dir );
+            $this->fix_permissions( $log_dir );
+        }
+
+        file_put_contents( $deploy_log, $line, FILE_APPEND | LOCK_EX );
+        $this->fix_permissions( $deploy_log );
+    }
+
+    /**
+     * Fix file/directory permissions for deploy user access.
+     *
+     * @param string $path Path to fix permissions for.
+     */
+    private function fix_permissions( $path ) {
+        if ( ! file_exists( $path ) ) {
+            return;
+        }
+
+        $deploy_user = $this->settings->get( 'deploy_user' );
+        if ( empty( $deploy_user ) ) {
+            return;
+        }
+
+        // Set ownership to deploy_user:www-data and permissions to 775/664
+        if ( is_dir( $path ) ) {
+            @chmod( $path, 0775 );
+            @exec( sprintf( 'sudo chown -R %s:www-data %s 2>/dev/null',
+                escapeshellarg( $deploy_user ),
+                escapeshellarg( $path )
+            ) );
+        } else {
+            @chmod( $path, 0664 );
+            @exec( sprintf( 'sudo chown %s:www-data %s 2>/dev/null',
+                escapeshellarg( $deploy_user ),
+                escapeshellarg( $path )
+            ) );
+        }
     }
 }

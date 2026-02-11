@@ -88,10 +88,11 @@ class CPSD_Processor {
      */
     private function mirror_full( $build_dir, $source_url, $source_domain, $exclude_domains, $extra_args ) {
         $cmd = sprintf(
-            'wget %s --page-requisites --adjust-extension --mirror --span-hosts --domains=%s --exclude-domains=%s %s -P %s 2>&1',
+            'wget %s --page-requisites --adjust-extension --mirror --span-hosts --domains=%s --exclude-domains=%s --reject-regex %s %s -P %s 2>&1',
             $extra_args,
             escapeshellarg( $source_domain ),
             escapeshellarg( $exclude_domains ),
+            escapeshellarg( '.*/category/.*' ),
             escapeshellarg( $source_url ),
             escapeshellarg( $build_dir )
         );
@@ -388,6 +389,111 @@ class CPSD_Processor {
     }
 
     /**
+     * Clean removed content from repo (files that exist in repo but not in build).
+     * Only runs during full rebuilds to remove stale content.
+     *
+     * @param string $build_dir Build directory.
+     * @param string $repo_dir  Git repo directory.
+     */
+    public function clean_removed_content( $build_dir, $repo_dir ) {
+        $source_domain = $this->settings->get_source_domain();
+        $build_source = $build_dir . '/' . $source_domain;
+
+        if ( ! is_dir( $build_source ) ) {
+            return;
+        }
+
+        $this->log( 'Checking for removed content...' );
+
+        // Get all files and top-level directories in build
+        $build_files = array();
+        $build_dirs = array();
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator( $build_source, RecursiveDirectoryIterator::SKIP_DOTS ),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ( $iterator as $item ) {
+            $rel_path = str_replace( $build_source . '/', '', $item->getPathname() );
+            if ( $item->isFile() ) {
+                $build_files[] = $rel_path;
+                // Track top-level directories
+                $parts = explode( '/', $rel_path );
+                if ( count( $parts ) > 0 ) {
+                    $build_dirs[ $parts[0] ] = true;
+                }
+            }
+        }
+        $build_files = array_flip( $build_files ); // Use as hashmap for fast lookup
+
+        // Get all files and top-level directories in repo
+        $repo_files = array();
+        $repo_top_dirs = array();
+        $repo_iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator( $repo_dir, RecursiveDirectoryIterator::SKIP_DOTS ),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ( $repo_iterator as $item ) {
+            $rel_path = str_replace( $repo_dir . '/', '', $item->getPathname() );
+
+            // Skip git metadata and special files
+            if ( strpos( $rel_path, '.git' ) === 0 ||
+                 $rel_path === 'README.md' ||
+                 $rel_path === 'CNAME' ||
+                 $rel_path === '.gitignore' ) {
+                continue;
+            }
+
+            // Track top-level directories in repo
+            $parts = explode( '/', $rel_path );
+            if ( count( $parts ) > 0 && ! isset( $repo_top_dirs[ $parts[0] ] ) ) {
+                $repo_top_dirs[ $parts[0] ] = $repo_dir . '/' . $parts[0];
+            }
+
+            if ( $item->isFile() && ! isset( $build_files[ $rel_path ] ) ) {
+                $repo_files[] = $rel_path;
+            }
+        }
+
+        // Check for entire directories that should be removed
+        $dirs_to_remove = array();
+        foreach ( $repo_top_dirs as $dir_name => $dir_path ) {
+            if ( ! isset( $build_dirs[ $dir_name ] ) && is_dir( $dir_path ) ) {
+                $dirs_to_remove[] = array( 'name' => $dir_name, 'path' => $dir_path );
+            }
+        }
+
+        // Remove entire directories that don't exist in build
+        if ( ! empty( $dirs_to_remove ) ) {
+            foreach ( $dirs_to_remove as $dir_info ) {
+                $this->log( sprintf( 'Removing directory: %s/', $dir_info['name'] ) );
+                exec( sprintf( 'rm -rf %s 2>/dev/null', escapeshellarg( $dir_info['path'] ) ) );
+            }
+        }
+
+        if ( empty( $repo_files ) && empty( $dirs_to_remove ) ) {
+            $this->log( 'No removed content found' );
+            return;
+        }
+
+        // Delete removed files
+        if ( ! empty( $repo_files ) ) {
+            $this->log( sprintf( 'Removing %d stale files...', count( $repo_files ) ) );
+            foreach ( $repo_files as $file ) {
+                $full_path = $repo_dir . '/' . $file;
+                if ( file_exists( $full_path ) ) {
+                    unlink( $full_path );
+                }
+            }
+        }
+
+        // Clean up empty directories
+        exec( sprintf( 'find %s -type d -empty -delete 2>/dev/null', escapeshellarg( $repo_dir ) ) );
+
+        $total_cleaned = count( $repo_files ) + count( $dirs_to_remove );
+        $this->log( sprintf( 'Cleaned %d removed files and %d directories', count( $repo_files ), count( $dirs_to_remove ) ) );
+    }
+
+    /**
      * Run the complete post-processing pipeline.
      *
      * @param string     $build_dir      Build directory.
@@ -431,6 +537,18 @@ class CPSD_Processor {
 
         // 10. Clean numbered duplicates
         $this->clean_numbered_files( $repo_dir );
+
+        // 11. Clean removed content (only for full rebuilds)
+        if ( null === $selective_urls ) {
+            $this->clean_removed_content( $build_dir, $repo_dir );
+        }
+
+        // 12. Force remove category directory (legacy URLs that redirect)
+        $category_dir = $repo_dir . '/category';
+        if ( is_dir( $category_dir ) ) {
+            $this->log( 'Removing legacy category directory...' );
+            exec( sprintf( 'rm -rf %s 2>/dev/null', escapeshellarg( $category_dir ) ) );
+        }
 
         return true;
     }

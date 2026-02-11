@@ -35,6 +35,7 @@ class CPSD_Deployer {
         }
 
         file_put_contents( $this->lock_file, getmypid() );
+        $this->fix_permissions( $this->lock_file );
 
         try {
             return $this->execute();
@@ -100,6 +101,7 @@ class CPSD_Deployer {
 
         // Save timestamp for next build
         file_put_contents( $this->timestamp_file, gmdate( 'Y-m-d\TH:i:s' ) );
+        $this->fix_permissions( $this->timestamp_file );
 
         // Step 4: Git operations
         if ( ! $this->git_commit_and_push( $repo_dir ) ) {
@@ -380,11 +382,14 @@ class CPSD_Deployer {
             return false;
         }
 
-        $this->git( $repo_dir, sprintf( 'pull origin %s', escapeshellarg( $staging_branch ) ) );
-
-        // Stage all changes
+        // Stage all changes first (including deletions from cleanup)
         $this->log( 'Staging new files from build...' );
         $this->git( $repo_dir, 'add -A' );
+
+        // Sync staging with master to prevent divergence
+        // Use merge instead of reset to preserve our deletions
+        $this->log( 'Syncing staging with production branch...' );
+        $this->git( $repo_dir, sprintf( 'pull origin %s --no-edit', escapeshellarg( $production_branch ) ) );
 
         // Pre-sync with production branch to prevent merge conflicts
         $this->log( 'Pre-syncing with production branch to prevent conflicts...' );
@@ -543,15 +548,48 @@ class CPSD_Deployer {
      * Log a message.
      */
     public function log( $message ) {
-        $timestamp = date( 'Y-m-d H:i:s' );
+        $timestamp = wp_date( 'Y-m-d H:i:s' );
         $line = sprintf( "[%s] %s\n", $timestamp, $message );
 
         $log_dir = dirname( $this->log_file );
         if ( ! is_dir( $log_dir ) ) {
             wp_mkdir_p( $log_dir );
+            $this->fix_permissions( $log_dir );
         }
 
         file_put_contents( $this->log_file, $line, FILE_APPEND | LOCK_EX );
+        $this->fix_permissions( $this->log_file );
+    }
+
+    /**
+     * Fix file/directory permissions for deploy user access.
+     *
+     * @param string $path Path to fix permissions for.
+     */
+    private function fix_permissions( $path ) {
+        if ( ! file_exists( $path ) ) {
+            return;
+        }
+
+        $deploy_user = $this->settings->get( 'deploy_user' );
+        if ( empty( $deploy_user ) ) {
+            return;
+        }
+
+        // Set ownership to deploy_user:www-data and permissions to 775/664
+        if ( is_dir( $path ) ) {
+            @chmod( $path, 0775 );
+            @exec( sprintf( 'sudo chown -R %s:www-data %s 2>/dev/null',
+                escapeshellarg( $deploy_user ),
+                escapeshellarg( $path )
+            ) );
+        } else {
+            @chmod( $path, 0664 );
+            @exec( sprintf( 'sudo chown %s:www-data %s 2>/dev/null',
+                escapeshellarg( $deploy_user ),
+                escapeshellarg( $path )
+            ) );
+        }
     }
 
     /**
