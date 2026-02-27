@@ -165,7 +165,7 @@ if ( ! defined( 'ABSPATH' ) ) {
                     <th><label for="cpsd_extra_wget_paths">Extra wget Paths</label></th>
                     <td>
                         <textarea id="cpsd_extra_wget_paths" name="cpsd_extra_wget_paths" rows="4" class="large-text code"><?php echo esc_textarea( $settings->get( 'extra_wget_paths' ) ); ?></textarea>
-                        <p class="description">One path per line. Additional paths on the source site to recursively mirror into the build, beyond what the main crawl covers. For assets (fonts, slider skins, icon sprites) referenced only from JavaScript that wget does not follow. E.g. <code>/wp-content/themes/enfold/config-layerslider/LayerSlider/assets/static/layerslider/skins/</code></p>
+                        <p class="description">One path per line. Paths on the source site to fetch into the build, beyond what the main crawl covers — for assets referenced only from JavaScript that wget does not follow.<br><strong>Trailing /</strong> → recursive directory download (requires server directory listing).<br><strong>No trailing /</strong> → exact file download; CSS files also have their <code>url()</code> dependencies fetched automatically.<br>E.g. <code>/wp-content/themes/enfold/config-layerslider/LayerSlider/assets/static/layerslider/skins/fullwidth/skin.css</code></p>
                     </td>
                 </tr>
             </table>

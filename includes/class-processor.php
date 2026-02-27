@@ -187,8 +187,12 @@ class CPSD_Processor {
      *
      * The main wget crawl follows links from HTML pages. Assets referenced
      * only from JavaScript (e.g. LayerSlider skins, icon fonts loaded by JS)
-     * are not discovered. This step downloads those paths explicitly via a
-     * recursive wget, using the same build directory structure as the main crawl.
+     * are not discovered. This step downloads those paths explicitly.
+     *
+     * Two modes based on trailing slash:
+     *   - Path ending with /  → recursive directory download (requires server dir listing)
+     *   - Path without /      → individual file download; CSS files also get their
+     *                           url() dependencies resolved and fetched automatically
      */
     public function mirror_extra_paths( $build_dir ) {
         $paths_str = $this->settings->get( 'extra_wget_paths' );
@@ -196,9 +200,10 @@ class CPSD_Processor {
             return;
         }
 
-        $source_url    = $this->settings->get( 'source_url' );
+        $source_url    = rtrim( $this->settings->get( 'source_url' ), '/' );
         $source_domain = $this->settings->get_source_domain();
         $extra_args    = $this->settings->get( 'wget_extra_args' );
+        $site_dir      = $build_dir . '/' . $source_domain;
 
         $paths = array_filter( array_map( 'trim', explode( "\n", $paths_str ) ) );
 
@@ -210,26 +215,105 @@ class CPSD_Processor {
 
         foreach ( $paths as $path ) {
             $path = '/' . ltrim( $path, '/' );
-            $url  = rtrim( $source_url, '/' ) . $path;
 
-            $cmd = sprintf(
-                'wget %s --recursive --no-parent --domains=%s -P %s %s 2>&1',
-                $extra_args,
-                escapeshellarg( $source_domain ),
-                escapeshellarg( $build_dir ),
-                escapeshellarg( $url )
-            );
-
-            $output     = array();
-            $return_var = 0;
-            exec( $cmd, $output, $return_var );
-
-            if ( $return_var !== 0 && $return_var !== 8 ) {
-                $this->log( "Warning: extra path wget exited with code $return_var for: $path" );
+            if ( substr( $path, -1 ) === '/' ) {
+                // Directory: recursive wget (requires server directory listing)
+                $cmd = sprintf(
+                    'wget %s --recursive --no-parent --domains=%s -P %s %s 2>&1',
+                    $extra_args,
+                    escapeshellarg( $source_domain ),
+                    escapeshellarg( $build_dir ),
+                    escapeshellarg( $source_url . $path )
+                );
+                $output     = array();
+                $return_var = 0;
+                exec( $cmd, $output, $return_var );
+                if ( $return_var !== 0 && $return_var !== 8 ) {
+                    $this->log( "Warning: directory wget failed (exit $return_var) for: $path" );
+                } else {
+                    $this->log( "Mirrored extra directory: $path" );
+                }
             } else {
-                $this->log( "Mirrored extra path: $path" );
+                // Individual file: download directly
+                $build_path = $site_dir . $path;
+                $dest_dir   = dirname( $build_path );
+                if ( ! is_dir( $dest_dir ) ) {
+                    wp_mkdir_p( $dest_dir );
+                }
+                $output     = array();
+                $return_var = 0;
+                exec( sprintf(
+                    'wget %s -q -O %s %s 2>&1',
+                    $extra_args,
+                    escapeshellarg( $build_path ),
+                    escapeshellarg( $source_url . $path )
+                ), $output, $return_var );
+
+                if ( $return_var === 0 ) {
+                    $this->log( "Fetched extra file: $path" );
+                    // For CSS files, also download relative url() dependencies
+                    if ( substr( $path, -4 ) === '.css' ) {
+                        $this->fetch_css_url_deps( $build_path, $path, $site_dir, $source_url, $extra_args );
+                    }
+                } else {
+                    $this->log( "Warning: failed to fetch extra file: $path (exit $return_var)" );
+                }
             }
         }
+    }
+
+    /**
+     * Download relative url() dependencies of a CSS file.
+     * Handles both direct references (url(skin.png)) and relative paths (url(../../img/foo.png)).
+     */
+    private function fetch_css_url_deps( $css_build_path, $css_web_path, $site_dir, $source_url, $extra_args ) {
+        $content = file_get_contents( $css_build_path );
+        $css_dir = dirname( $css_web_path );
+
+        preg_match_all( '/url\s*\(\s*[\'"]?([^\'"\)\s]+)[\'"]?\s*\)/i', $content, $matches );
+
+        foreach ( $matches[1] as $ref ) {
+            if ( preg_match( '/^https?:\/\//i', $ref ) || strpos( $ref, 'data:' ) === 0 ) {
+                continue; // Skip absolute and data URIs
+            }
+            $ref      = preg_replace( '/[\?#].*$/', '', $ref ); // Strip query/fragment
+            $resolved = $this->resolve_relative_url( $css_dir, $ref );
+            $dest     = $site_dir . $resolved;
+
+            if ( file_exists( $dest ) ) {
+                continue;
+            }
+            if ( ! is_dir( dirname( $dest ) ) ) {
+                wp_mkdir_p( dirname( $dest ) );
+            }
+            $output     = array();
+            $return_var = 0;
+            exec( sprintf(
+                'wget %s -q -O %s %s 2>&1',
+                $extra_args,
+                escapeshellarg( $dest ),
+                escapeshellarg( $source_url . $resolved )
+            ), $output, $return_var );
+            if ( $return_var === 0 ) {
+                $this->log( "Fetched CSS dep: $resolved" );
+            }
+        }
+    }
+
+    /**
+     * Resolve a relative URL reference against a base directory path.
+     * e.g. resolve_relative_url('/foo/bar', '../../img/x.png') → '/img/x.png'
+     */
+    private function resolve_relative_url( $base_dir, $ref ) {
+        $parts = array_values( array_filter( explode( '/', $base_dir ), 'strlen' ) );
+        foreach ( explode( '/', $ref ) as $part ) {
+            if ( $part === '..' ) {
+                array_pop( $parts );
+            } elseif ( $part !== '.' && $part !== '' ) {
+                $parts[] = $part;
+            }
+        }
+        return '/' . implode( '/', $parts );
     }
 
     /**
