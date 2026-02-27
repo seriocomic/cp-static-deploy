@@ -244,6 +244,43 @@ class CPSD_Processor {
     }
 
     /**
+     * Rewrite URLs in CSS and JS files.
+     *
+     * Autoptimize bundles CSS/JS on the staging server and embeds absolute
+     * staging-domain URLs for fonts, images, and AJAX endpoints. These bundles
+     * are copied verbatim by wget and must have their domain rewritten here,
+     * exactly as HTML files are handled in rewrite_urls_html().
+     */
+    public function rewrite_urls_css_js( $build_dir ) {
+        $source_domain     = $this->settings->get_source_domain();
+        $production_domain = $this->settings->get_production_domain();
+        $site_dir          = $build_dir . '/' . $source_domain;
+
+        $this->log( 'Rewriting URLs in CSS/JS files...' );
+        $count = 0;
+
+        $css_files = $this->find_files( $site_dir, '*.css' );
+        $js_files  = $this->find_files( $site_dir, '*.js' );
+        $files     = array_merge( $css_files, $js_files );
+
+        foreach ( $files as $file ) {
+            $content  = file_get_contents( $file );
+            $original = $content;
+
+            // Domain swap: //stage.example.com → //www.example.com
+            // Matches both protocol-relative (//stage...) and absolute (https://stage...) URLs.
+            $content = str_replace( '//' . $source_domain, '//' . $production_domain, $content );
+
+            if ( $content !== $original ) {
+                file_put_contents( $file, $content );
+                $count++;
+            }
+        }
+
+        $this->log( "Rewrote URLs in $count CSS/JS files" );
+    }
+
+    /**
      * Rewrite URLs in XML and RSS files.
      * Replaces: gulp 'replace-xml-rss' task.
      */
@@ -435,11 +472,18 @@ class CPSD_Processor {
         foreach ( $repo_iterator as $item ) {
             $rel_path = str_replace( $repo_dir . '/', '', $item->getPathname() );
 
-            // Skip git metadata and special files
-            if ( strpos( $rel_path, '.git' ) === 0 ||
-                 $rel_path === 'README.md' ||
-                 $rel_path === 'CNAME' ||
-                 $rel_path === '.gitignore' ) {
+            // Skip git metadata, standard repo infrastructure files, and any
+            // user-configured protected files (e.g. _worker.js, _headers).
+            $protected = array( 'README.md', 'CNAME', '.gitignore' );
+            $extra     = $this->settings->get( 'protected_files' );
+            if ( ! empty( $extra ) ) {
+                foreach ( array_map( 'trim', explode( ',', $extra ) ) as $f ) {
+                    if ( $f !== '' ) {
+                        $protected[] = $f;
+                    }
+                }
+            }
+            if ( strpos( $rel_path, '.git' ) === 0 || in_array( $rel_path, $protected, true ) ) {
                 continue;
             }
 
@@ -531,29 +575,32 @@ class CPSD_Processor {
         // 5. Rewrite URLs in HTML
         $this->rewrite_urls_html( $build_dir );
 
-        // 6. Rewrite URLs in XML/RSS (handles domain swap in all.rss)
+        // 6. Rewrite URLs in CSS/JS (Autoptimize bundles embed staging-domain font/image/ajax URLs)
+        $this->rewrite_urls_css_js( $build_dir );
+
+        // 7. Rewrite URLs in XML/RSS (handles domain swap in all.rss)
         $this->rewrite_urls_xml( $build_dir );
 
-        // 7. Generate robots.txt
+        // 9. Generate robots.txt
         $this->generate_robots_txt( $build_dir );
 
-        // 8. Copy README
+        // 10. Copy README
         $this->copy_readme( $build_dir );
 
-        // 9. Copy to repo
+        // 11. Copy to repo
         if ( ! $this->copy_to_repo( $build_dir, $repo_dir ) ) {
             return false;
         }
 
-        // 10. Clean numbered duplicates
+        // 12. Clean numbered duplicates
         $this->clean_numbered_files( $repo_dir );
 
-        // 11. Clean removed content (only for full rebuilds)
+        // 13. Clean removed content (only for full rebuilds)
         if ( null === $selective_urls ) {
             $this->clean_removed_content( $build_dir, $repo_dir );
         }
 
-        // 12. Force remove category directory (legacy URLs that redirect)
+        // 14. Force remove category directory (legacy URLs that redirect)
         $category_dir = $repo_dir . '/category';
         if ( is_dir( $category_dir ) ) {
             $this->log( 'Removing legacy category directory...' );

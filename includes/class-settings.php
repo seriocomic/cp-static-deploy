@@ -33,6 +33,7 @@ class CPSD_Settings {
         'pr_auto_merge_label'   => array( 'default' => 'auto-merge', 'type' => 'text', 'label' => 'Auto-Merge Label', 'description' => 'GitHub label to add to PRs for auto-merge' ),
         'readme_content'        => array( 'default' => '', 'type' => 'textarea', 'label' => 'README Content', 'description' => 'Content for README.md in the static site repo. Leave empty to skip.' ),
         'wget_extra_args'       => array( 'default' => '--no-check-certificate', 'type' => 'text', 'label' => 'Extra wget Arguments', 'description' => 'Additional arguments passed to wget (e.g. --no-check-certificate for self-signed certs)' ),
+        'protected_files'       => array( 'default' => '', 'type' => 'text', 'label' => 'Protected Files', 'description' => 'Comma-separated filenames in the repo root that must never be deleted by the build pipeline (e.g. _worker.js,_headers).' ),
     );
 
     /**

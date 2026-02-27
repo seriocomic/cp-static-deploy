@@ -154,6 +154,13 @@ if ( ! defined( 'ABSPATH' ) ) {
                         <p class="description">Content for README.md in the repo. Leave empty to skip.</p>
                     </td>
                 </tr>
+                <tr>
+                    <th><label for="cpsd_protected_files">Protected Files</label></th>
+                    <td>
+                        <input type="text" id="cpsd_protected_files" name="cpsd_protected_files" value="<?php echo esc_attr( $settings->get( 'protected_files' ) ); ?>" class="regular-text" placeholder="_worker.js,_headers" />
+                        <p class="description">Comma-separated filenames in the repo root that the build pipeline must never delete (e.g. <code>_worker.js,_headers</code>).</p>
+                    </td>
+                </tr>
             </table>
         </div>
 
