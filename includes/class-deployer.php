@@ -382,50 +382,22 @@ class CPSD_Deployer {
             return false;
         }
 
-        // Stage all changes first (including deletions from cleanup)
-        $this->log( 'Staging new files from build...' );
+        // Reset local staging to match remote exactly.
+        // The GitHub Actions workflow resets staging to master after every merge,
+        // so this is always a clean fast-forward base — no conflicts possible.
+        $this->log( 'Syncing local staging with remote...' );
+        $this->git( $repo_dir, sprintf( 'reset --hard origin/%s', escapeshellarg( $staging_branch ) ) );
+
+        // Stage all changes from build output
+        $this->log( 'Staging build output...' );
         $this->git( $repo_dir, 'add -A' );
-
-        // Sync staging with master to prevent divergence
-        // Use merge instead of reset to preserve our deletions
-        $this->log( 'Syncing staging with production branch...' );
-        $this->git( $repo_dir, sprintf( 'pull origin %s --no-edit', escapeshellarg( $production_branch ) ) );
-
-        // Pre-sync with production branch to prevent merge conflicts
-        $this->log( 'Pre-syncing with production branch to prevent conflicts...' );
-        $merge_result = $this->git( $repo_dir, sprintf(
-            'merge origin/%s --no-commit --no-ff',
-            escapeshellarg( $production_branch )
-        ) );
-
-        if ( ! $merge_result ) {
-            $this->log( 'Merge conflicts detected, auto-resolving...' );
-            // Get conflicted files
-            $conflicts = array();
-            exec( sprintf( 'cd %s && git diff --name-only --diff-filter=U 2>/dev/null',
-                escapeshellarg( $repo_dir ) ), $conflicts );
-
-            foreach ( $conflicts as $file ) {
-                $file = trim( $file );
-                if ( empty( $file ) ) continue;
-
-                $file_path = $repo_dir . '/' . $file;
-                if ( file_exists( $file_path ) ) {
-                    $this->git( $repo_dir, sprintf( 'checkout --theirs %s', escapeshellarg( $file ) ) );
-                } else {
-                    $this->git( $repo_dir, sprintf( 'rm %s', escapeshellarg( $file ) ) );
-                }
-            }
-            $this->git( $repo_dir, 'add -A' );
-        }
 
         // Check for actual changes
         $diff_output = array();
         exec( sprintf( 'cd %s && git diff --cached --quiet 2>&1', escapeshellarg( $repo_dir ) ), $diff_output, $diff_exit );
 
         if ( 0 === $diff_exit ) {
-            $this->log( 'No changes detected after merge. Skipping deployment.' );
-            $this->git( $repo_dir, 'merge --abort' );
+            $this->log( 'No changes detected. Skipping deployment.' );
             return false;
         }
 
@@ -454,7 +426,7 @@ class CPSD_Deployer {
         $this->num_files = $num_files;
 
         // Commit
-        $commit_msg = sprintf( 'Auto-deploy: Site update %s', date( 'Y-m-d H:i' ) );
+        $commit_msg = sprintf( 'Auto-deploy: Site update %s', wp_date( 'Y-m-d H:i', null, new DateTimeZone( 'Australia/Melbourne' ) ) );
         $this->log( "Committing: $commit_msg" );
 
         if ( ! $this->git( $repo_dir, sprintf( 'commit -m %s -m %s',
@@ -488,7 +460,7 @@ class CPSD_Deployer {
         $production_url    = $this->settings->get( 'production_url' );
         $source_url        = $this->settings->get( 'source_url' );
 
-        $title = sprintf( 'Auto-deploy: Site update %s', date( 'Y-m-d H:i' ) );
+        $title = sprintf( 'Auto-deploy: Site update %s', wp_date( 'Y-m-d H:i', null, new DateTimeZone( 'Australia/Melbourne' ) ) );
 
         $body = sprintf(
             "Automated deployment from %s\n\n## Changes\n```\n%s\n```\n\nThis PR will be automatically merged by GitHub Actions.",
