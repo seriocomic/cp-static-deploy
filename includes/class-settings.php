@@ -34,6 +34,7 @@ class CPSD_Settings {
         'readme_content'        => array( 'default' => '', 'type' => 'textarea', 'label' => 'README Content', 'description' => 'Content for README.md in the static site repo. Leave empty to skip.' ),
         'wget_extra_args'       => array( 'default' => '--no-check-certificate', 'type' => 'text', 'label' => 'Extra wget Arguments', 'description' => 'Additional arguments passed to wget (e.g. --no-check-certificate for self-signed certs)' ),
         'protected_files'       => array( 'default' => '', 'type' => 'text', 'label' => 'Protected Files', 'description' => 'Comma-separated filenames in the repo root that must never be deleted by the build pipeline (e.g. _worker.js,_headers).' ),
+        'extra_wget_paths'      => array( 'default' => '', 'type' => 'textarea', 'label' => 'Extra wget Paths', 'description' => 'One path per line. Paths on the source site to recursively mirror into the build, beyond what the main crawl covers. For assets referenced only from JavaScript (e.g. theme icon fonts or slider skins) that wget does not follow.' ),
     );
 
     /**

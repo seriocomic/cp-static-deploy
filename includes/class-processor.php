@@ -183,6 +183,56 @@ class CPSD_Processor {
     }
 
     /**
+     * Mirror additional paths from the source site.
+     *
+     * The main wget crawl follows links from HTML pages. Assets referenced
+     * only from JavaScript (e.g. LayerSlider skins, icon fonts loaded by JS)
+     * are not discovered. This step downloads those paths explicitly via a
+     * recursive wget, using the same build directory structure as the main crawl.
+     */
+    public function mirror_extra_paths( $build_dir ) {
+        $paths_str = $this->settings->get( 'extra_wget_paths' );
+        if ( empty( trim( $paths_str ) ) ) {
+            return;
+        }
+
+        $source_url    = $this->settings->get( 'source_url' );
+        $source_domain = $this->settings->get_source_domain();
+        $extra_args    = $this->settings->get( 'wget_extra_args' );
+
+        $paths = array_filter( array_map( 'trim', explode( "\n", $paths_str ) ) );
+
+        if ( empty( $paths ) ) {
+            return;
+        }
+
+        $this->log( sprintf( 'Mirroring %d extra path(s)...', count( $paths ) ) );
+
+        foreach ( $paths as $path ) {
+            $path = '/' . ltrim( $path, '/' );
+            $url  = rtrim( $source_url, '/' ) . $path;
+
+            $cmd = sprintf(
+                'wget %s --recursive --no-parent --domains=%s -P %s %s 2>&1',
+                $extra_args,
+                escapeshellarg( $source_domain ),
+                escapeshellarg( $build_dir ),
+                escapeshellarg( $url )
+            );
+
+            $output     = array();
+            $return_var = 0;
+            exec( $cmd, $output, $return_var );
+
+            if ( $return_var !== 0 && $return_var !== 8 ) {
+                $this->log( "Warning: extra path wget exited with code $return_var for: $path" );
+            } else {
+                $this->log( "Mirrored extra path: $path" );
+            }
+        }
+    }
+
+    /**
      * Download a single extra file via wget.
      */
     private function download_extra_file( $url, $dest, $extra_args, $expect_error = false ) {
@@ -564,43 +614,47 @@ class CPSD_Processor {
             return false;
         }
 
-        // 3. Process feeds (update GUIDs, convert feed/index.html → all.rss)
+        // 4. Mirror additional paths (assets referenced only from JavaScript,
+        //    e.g. theme icon fonts, slider skins, that wget does not follow).
+        $this->mirror_extra_paths( $build_dir );
+
+        // 5. Process feeds (update GUIDs, convert feed/index.html → all.rss)
         //    Must happen before HTML rewriting, because wget saves the RSS feed
         //    as feed/index.html and the HTML rewriter would corrupt the XML.
         $this->process_feeds( $build_dir );
 
-        // 4. Clean old feed files (remove feed/index.html before HTML rewriter sees it)
+        // 6. Clean old feed files (remove feed/index.html before HTML rewriter sees it)
         $this->clean_old_files( $build_dir );
 
-        // 5. Rewrite URLs in HTML
+        // 7. Rewrite URLs in HTML
         $this->rewrite_urls_html( $build_dir );
 
-        // 6. Rewrite URLs in CSS/JS (Autoptimize bundles embed staging-domain font/image/ajax URLs)
+        // 8. Rewrite URLs in CSS/JS (Autoptimize bundles embed staging-domain font/image/ajax URLs)
         $this->rewrite_urls_css_js( $build_dir );
 
-        // 7. Rewrite URLs in XML/RSS (handles domain swap in all.rss)
+        // 9. Rewrite URLs in XML/RSS (handles domain swap in all.rss)
         $this->rewrite_urls_xml( $build_dir );
 
-        // 9. Generate robots.txt
+        // 10. Generate robots.txt
         $this->generate_robots_txt( $build_dir );
 
-        // 10. Copy README
+        // 11. Copy README
         $this->copy_readme( $build_dir );
 
-        // 11. Copy to repo
+        // 12. Copy to repo
         if ( ! $this->copy_to_repo( $build_dir, $repo_dir ) ) {
             return false;
         }
 
-        // 12. Clean numbered duplicates
+        // 13. Clean numbered duplicates
         $this->clean_numbered_files( $repo_dir );
 
-        // 13. Clean removed content (only for full rebuilds)
+        // 14. Clean removed content (only for full rebuilds)
         if ( null === $selective_urls ) {
             $this->clean_removed_content( $build_dir, $repo_dir );
         }
 
-        // 14. Force remove category directory (legacy URLs that redirect)
+        // 15. Force remove category directory (legacy URLs that redirect)
         $category_dir = $repo_dir . '/category';
         if ( is_dir( $category_dir ) ) {
             $this->log( 'Removing legacy category directory...' );

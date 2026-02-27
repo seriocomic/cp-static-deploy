@@ -161,6 +161,13 @@ if ( ! defined( 'ABSPATH' ) ) {
                         <p class="description">Comma-separated filenames in the repo root that the build pipeline must never delete (e.g. <code>_worker.js,_headers</code>).</p>
                     </td>
                 </tr>
+                <tr>
+                    <th><label for="cpsd_extra_wget_paths">Extra wget Paths</label></th>
+                    <td>
+                        <textarea id="cpsd_extra_wget_paths" name="cpsd_extra_wget_paths" rows="4" class="large-text code"><?php echo esc_textarea( $settings->get( 'extra_wget_paths' ) ); ?></textarea>
+                        <p class="description">One path per line. Additional paths on the source site to recursively mirror into the build, beyond what the main crawl covers. For assets (fonts, slider skins, icon sprites) referenced only from JavaScript that wget does not follow. E.g. <code>/wp-content/themes/enfold/config-layerslider/LayerSlider/assets/static/layerslider/skins/</code></p>
+                    </td>
+                </tr>
             </table>
         </div>
 
