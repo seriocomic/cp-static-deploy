@@ -89,7 +89,14 @@ class CPSD_Deployer {
             $this->log( sprintf( 'Will rebuild %d URLs (including dependencies)', count( $selective_urls ) ) );
         }
 
-        // Step 3: Run the processing pipeline
+        // Step 3: Sync repo to remote before the pipeline runs.
+        // This MUST happen before run_pipeline() so that clean_removed_content()
+        // deletions are not undone by a subsequent git reset --hard.
+        if ( ! $this->sync_repo_to_remote( $repo_dir ) ) {
+            return false;
+        }
+
+        // Step 4: Run the processing pipeline
         $processor = new CPSD_Processor( $this->settings, array( $this, 'log' ) );
 
         if ( ! $processor->run_pipeline( $build_dir, $repo_dir, $selective_urls ) ) {
@@ -103,7 +110,7 @@ class CPSD_Deployer {
         file_put_contents( $this->timestamp_file, gmdate( 'Y-m-d\TH:i:s' ) );
         $this->fix_permissions( $this->timestamp_file );
 
-        // Step 4: Git operations
+        // Step 5: Git operations (add, commit, push — repo already synced in step 3)
         if ( ! $this->git_commit_and_push( $repo_dir ) ) {
             return false;
         }
@@ -360,18 +367,19 @@ class CPSD_Deployer {
     }
 
     /**
-     * Git commit and push operations.
+     * Sync the local repo to the remote staging branch.
+     *
+     * Must be called BEFORE run_pipeline() so that file deletions made by
+     * clean_removed_content() are not undone by a subsequent git reset --hard.
      *
      * @param string $repo_dir Git repository directory.
      * @return bool True on success.
      */
-    private function git_commit_and_push( $repo_dir ) {
-        $staging_branch    = $this->settings->get( 'git_staging_branch' );
-        $production_branch = $this->settings->get( 'git_production_branch' );
+    private function sync_repo_to_remote( $repo_dir ) {
+        $staging_branch = $this->settings->get( 'git_staging_branch' );
 
-        $this->log( 'Starting git operations...' );
+        $this->log( 'Syncing local staging with remote...' );
 
-        // Fetch and checkout staging branch
         if ( ! $this->git( $repo_dir, 'fetch origin' ) ) {
             $this->log( 'ERROR: git fetch failed' );
             return false;
@@ -385,8 +393,24 @@ class CPSD_Deployer {
         // Reset local staging to match remote exactly.
         // The GitHub Actions workflow resets staging to master after every merge,
         // so this is always a clean fast-forward base — no conflicts possible.
-        $this->log( 'Syncing local staging with remote...' );
         $this->git( $repo_dir, sprintf( 'reset --hard origin/%s', escapeshellarg( $staging_branch ) ) );
+
+        return true;
+    }
+
+    /**
+     * Stage, commit and push build output to the staging branch.
+     *
+     * Assumes sync_repo_to_remote() has already been called before the pipeline ran.
+     *
+     * @param string $repo_dir Git repository directory.
+     * @return bool True on success.
+     */
+    private function git_commit_and_push( $repo_dir ) {
+        $staging_branch    = $this->settings->get( 'git_staging_branch' );
+        $production_branch = $this->settings->get( 'git_production_branch' );
+
+        $this->log( 'Starting git operations...' );
 
         // Stage all changes from build output
         $this->log( 'Staging build output...' );
