@@ -413,7 +413,11 @@ class CPSD_Processor {
         // Matches https:// and http:// but NOT protocol-relative //, so CSS
         // @font-face and background-image url() references (which use //) are
         // untouched. Only evaluated against JS files (see below).
-        $wp_abs_url_pattern = '#https?://' . preg_quote( $production_domain, '#' ) . '/wp-content/(?:themes|plugins)/\S*#';
+        //
+        // Character class stops at quote chars (', ") and common JS delimiters
+        // so the match ends at the closing quote of the JS string literal and
+        // does NOT consume surrounding JS syntax.
+        $wp_abs_url_pattern = '#https?://' . preg_quote( $production_domain, '#' ) . '/wp-content/(?:themes|plugins)/[^\s\'")\]>]*#';
 
         foreach ( $files as $file ) {
             $content  = file_get_contents( $file );
