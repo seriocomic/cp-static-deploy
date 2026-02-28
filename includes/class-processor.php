@@ -384,6 +384,18 @@ class CPSD_Processor {
      * staging-domain URLs for fonts, images, and AJAX endpoints. These bundles
      * are copied verbatim by wget and must have their domain rewritten here,
      * exactly as HTML files are handled in rewrite_urls_html().
+     *
+     * A second pass on JS files strips any remaining absolute https:// URLs
+     * that point to wp-content/themes/ or wp-content/plugins/ on the production
+     * domain. These are WordPress-internal paths (e.g. LayerSlider skinsPath)
+     * that have no equivalent on the static site. Stripping them to an empty
+     * string causes the JS component to gracefully skip loading that asset.
+     *
+     * CSS files are intentionally excluded from this second pass. Font and image
+     * assets in CSS bundles use protocol-relative URLs (//domain/wp-content/...)
+     * which wget downloads as page-requisites and correctly serves from the
+     * static site. Only the https:// absolute form used in JS init scripts needs
+     * to be stripped.
      */
     public function rewrite_urls_css_js( $build_dir ) {
         $source_domain     = $this->settings->get_source_domain();
@@ -397,13 +409,26 @@ class CPSD_Processor {
         $js_files  = $this->find_files( $site_dir, '*.js' );
         $files     = array_merge( $css_files, $js_files );
 
+        // Pattern to strip absolute https:// WP theme/plugin URLs from JS.
+        // Matches https:// and http:// but NOT protocol-relative //, so CSS
+        // @font-face and background-image url() references (which use //) are
+        // untouched. Only evaluated against JS files (see below).
+        $wp_abs_url_pattern = '#https?://' . preg_quote( $production_domain, '#' ) . '/wp-content/(?:themes|plugins)/\S*#';
+
         foreach ( $files as $file ) {
             $content  = file_get_contents( $file );
             $original = $content;
 
-            // Domain swap: //stage.example.com → //www.example.com
+            // Pass 1 — Domain swap: //stage.example.com → //www.example.com
             // Matches both protocol-relative (//stage...) and absolute (https://stage...) URLs.
             $content = str_replace( '//' . $source_domain, '//' . $production_domain, $content );
+
+            // Pass 2 (JS only) — Strip absolute https:// wp-content/themes|plugins URLs.
+            // After the domain swap these point to the production domain but at
+            // WordPress-internal paths that don't exist on the static site.
+            if ( substr( $file, -3 ) === '.js' ) {
+                $content = preg_replace( $wp_abs_url_pattern, '', $content );
+            }
 
             if ( $content !== $original ) {
                 file_put_contents( $file, $content );
