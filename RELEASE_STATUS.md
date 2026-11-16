@@ -1,6 +1,6 @@
 # CP Static Deploy - Release Status
 
-## Current Version: 1.1.0
+## Current Version: 1.2.0
 
 **Status:** ✅ **RELEASE READY**
 
@@ -8,20 +8,28 @@
 
 ## Version History
 
-### v1.1.0 (Latest - 2026-02-11)
-**Focus:** Build caching, staging sync, permissions, robustness
+### v1.2.0 (Latest - 2026-11-16)
+**Focus:** Build verification, dependent pages, deploy robustness
 
 **Changes:**
-- ✅ Clear build directory before full rebuilds (prevents stale wget cache reuse)
-- ✅ Staging sync runs before the pipeline so removals are not undone
-- ✅ `webmin:www-data` ownership with automatic permission fixes
-- ✅ Enhanced detection/removal of stale directories and files
+- ✅ Builds fail when a required page was not downloaded (changed pages for selective builds, all published posts/pages for full builds)
+- ✅ Full builds fetch published pages the crawl did not reach, so unlinked posts are not purged
+- ✅ Selective builds refetch the cache-clean pages, term archives and previous/next posts of each changed post
 - ✅ 404 page captured via `--content-on-error` (no longer ships empty)
 - ✅ Build timestamp persisted only after a successful push + PR (no lost edits)
 - ✅ Edits during a build queue a rerun instead of being dropped
 - ✅ Unpublished/trashed content forces a full rebuild to purge stale files
 - ✅ Stale lock files (crashed runs) are auto-cleared via PID/age check
 - ✅ Change detection cap raised from 100 to 1000 per type
+
+### v1.1.0 (2026-02-11)
+**Focus:** Build caching, staging sync, permissions
+
+**Changes:**
+- ✅ Clear build directory before full rebuilds (prevents stale wget cache reuse)
+- ✅ Staging sync runs before the pipeline so removals are not undone
+- ✅ `webmin:www-data` ownership with automatic permission fixes
+- ✅ Enhanced detection/removal of stale directories and files
 
 ### v1.0.3 (2026-02-10)
 **Focus:** Database-based change detection with REST API fallback
