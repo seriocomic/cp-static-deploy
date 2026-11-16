@@ -114,7 +114,13 @@ class CPSD_Admin {
         $deployer = new CPSD_Deployer( $this->settings );
 
         if ( $deployer->is_running() ) {
-            $this->trigger_log( "Deploy already in progress, skipping trigger for: {$post->post_title}" );
+            // A build is already running. Record a pending rerun (file-based so
+            // the separate CLI deploy process sees it without a shared object
+            // cache) so this edit is rebuilt as soon as the current build ends.
+            $this->trigger_log( "Deploy already in progress; queuing rerun for: {$post->post_title}" );
+            $rerun_flag = CPSD_WORKING_DIR . '/.rerun-pending';
+            file_put_contents( $rerun_flag, '1' );
+            $this->fix_permissions( $rerun_flag );
             return;
         }
 

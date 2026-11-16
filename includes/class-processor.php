@@ -320,9 +320,13 @@ class CPSD_Processor {
      * Download a single extra file via wget.
      */
     private function download_extra_file( $url, $dest, $extra_args, $expect_error = false ) {
+        // For pages that legitimately return a non-2xx status (e.g. the 404
+        // template served with a 404 status), --content-on-error tells wget to
+        // still write the response body. Without it wget saves a zero-byte file.
         $cmd = sprintf(
-            'wget %s %s -O %s 2>&1',
+            'wget %s %s %s -O %s 2>&1',
             $extra_args,
+            $expect_error ? '--content-on-error' : '',
             escapeshellarg( $url ),
             escapeshellarg( $dest )
         );

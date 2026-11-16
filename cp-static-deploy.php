@@ -54,6 +54,7 @@ class CP_Static_Deploy {
             add_action( 'publish_post', array( $this, 'handle_publish' ), 10, 2 );
             add_action( 'publish_page', array( $this, 'handle_publish' ), 10, 2 );
             add_action( 'post_updated', array( $this, 'handle_update' ), 10, 3 );
+            add_action( 'transition_post_status', array( $this, 'handle_status_change' ), 10, 3 );
         }
 
         add_action( 'cpsd_check_deploy_result', array( $this->admin, 'check_deploy_result' ) );
@@ -133,6 +134,28 @@ class CP_Static_Deploy {
     }
 
     /**
+     * Handle a post/page leaving published status (unpublish, trash, private).
+     *
+     * publish_post/publish_page and post_updated only cover content that is or
+     * stays published. When a published item is removed, its stale static file
+     * must be purged, so trigger a deploy here. The deployer detects the missing
+     * content and forces a full rebuild (which runs clean_removed_content).
+     *
+     * @param string  $new_status New post status.
+     * @param string  $old_status Previous post status.
+     * @param WP_Post $post       Post object.
+     */
+    public function handle_status_change( $new_status, $old_status, $post ) {
+        if ( ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) {
+            return;
+        }
+        // Only react to content that was published and is no longer published.
+        if ( 'publish' === $old_status && 'publish' !== $new_status ) {
+            $this->admin->trigger_deploy( $post->ID, $post );
+        }
+    }
+
+    /**
      * Register custom REST API query parameters.
      */
     public function register_rest_fields() {
@@ -185,4 +208,16 @@ add_action( 'cpsd_run_deploy', function() {
     $settings = new CPSD_Settings();
     $deployer = new CPSD_Deployer( $settings );
     $deployer->run();
+
+    // A trigger that arrived while this build was running recorded a pending
+    // rerun (see CPSD_Admin::trigger_deploy). Process it now so edits made
+    // during a build are not stranded until the next unrelated publish.
+    // Bounded to avoid a tight loop under continuous editing.
+    $rerun_flag = CPSD_WORKING_DIR . '/.rerun-pending';
+    $reruns = 0;
+    while ( file_exists( $rerun_flag ) && $reruns < 3 ) {
+        @unlink( $rerun_flag );
+        $reruns++;
+        $deployer->run();
+    }
 } );

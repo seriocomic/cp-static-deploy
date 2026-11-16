@@ -1,6 +1,6 @@
 # CP Static Deploy - Release Status
 
-## Current Version: 1.0.3
+## Current Version: 1.1.0
 
 **Status:** ✅ **RELEASE READY**
 
@@ -8,7 +8,22 @@
 
 ## Version History
 
-### v1.0.3 (Latest - 2026-02-10)
+### v1.1.0 (Latest - 2026-02-11)
+**Focus:** Build caching, staging sync, permissions, robustness
+
+**Changes:**
+- ✅ Clear build directory before full rebuilds (prevents stale wget cache reuse)
+- ✅ Staging sync runs before the pipeline so removals are not undone
+- ✅ `webmin:www-data` ownership with automatic permission fixes
+- ✅ Enhanced detection/removal of stale directories and files
+- ✅ 404 page captured via `--content-on-error` (no longer ships empty)
+- ✅ Build timestamp persisted only after a successful push + PR (no lost edits)
+- ✅ Edits during a build queue a rerun instead of being dropped
+- ✅ Unpublished/trashed content forces a full rebuild to purge stale files
+- ✅ Stale lock files (crashed runs) are auto-cleared via PID/age check
+- ✅ Change detection cap raised from 100 to 1000 per type
+
+### v1.0.3 (2026-02-10)
 **Focus:** Database-based change detection with REST API fallback
 
 **Changes:**

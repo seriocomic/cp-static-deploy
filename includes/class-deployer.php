@@ -30,8 +30,13 @@ class CPSD_Deployer {
     public function run() {
         // Acquire lock
         if ( file_exists( $this->lock_file ) ) {
-            $this->log( 'Deploy already in progress (lock file exists). Exiting.' );
-            return false;
+            if ( $this->is_lock_stale() ) {
+                $this->log( 'Clearing stale lock file (no live deploy process).' );
+                @unlink( $this->lock_file );
+            } else {
+                $this->log( 'Deploy already in progress (lock file exists). Exiting.' );
+                return false;
+            }
         }
 
         file_put_contents( $this->lock_file, getmypid() );
@@ -58,6 +63,13 @@ class CPSD_Deployer {
         $build_dir = CPSD_WORKING_DIR . '/build';
         $repo_dir  = CPSD_WORKING_DIR . '/repo';
 
+        // Capture the build start time BEFORE change detection. The timestamp is
+        // only persisted after a successful push + PR (see end of this method).
+        // Using the start time means any edit made *during* the build falls into
+        // the next detection window rather than being silently skipped, and a
+        // failed push/PR leaves the timestamp unadvanced so the change is retried.
+        $build_started = gmdate( 'Y-m-d\TH:i:s' );
+
         // Step 1: Check for changes via WordPress REST API
         $changes = $this->detect_changes();
 
@@ -66,7 +78,7 @@ class CPSD_Deployer {
             return false;
         }
 
-        if ( empty( $changes['urls'] ) ) {
+        if ( empty( $changes['urls'] ) && empty( $changes['force_full'] ) ) {
             $this->log( 'No changes detected via API. Skipping deployment.' );
             return true;
         }
@@ -81,6 +93,8 @@ class CPSD_Deployer {
 
         if ( $changes['is_first_build'] ) {
             $this->log( 'First build - using full mirror' );
+        } elseif ( ! empty( $changes['force_full'] ) ) {
+            $this->log( 'Content left publish status - using full mirror to purge stale files' );
         } elseif ( $total > $threshold ) {
             $this->log( sprintf( 'Many changes (%d > %d threshold) - using full mirror', $total, $threshold ) );
         } else {
@@ -106,25 +120,49 @@ class CPSD_Deployer {
 
         $this->log( 'Build pipeline completed successfully' );
 
-        // Save timestamp for next build
-        file_put_contents( $this->timestamp_file, gmdate( 'Y-m-d\TH:i:s' ) );
-        $this->fix_permissions( $this->timestamp_file );
-
         // Step 5: Git operations (add, commit, push — repo already synced in step 3)
-        if ( ! $this->git_commit_and_push( $repo_dir ) ) {
+        $git_result = $this->git_commit_and_push( $repo_dir );
+
+        if ( false === $git_result ) {
+            // Genuine git error (commit or push failed). Leave the timestamp
+            // unadvanced so this change is retried on the next run.
             return false;
         }
 
-        // Step 5: Create/update PR
+        if ( 'no_changes' === $git_result ) {
+            // Build produced output identical to what is already on staging.
+            // Nothing to deploy, but the content *was* built — advance the
+            // timestamp so we don't re-detect the same change every trigger.
+            $this->save_build_timestamp( $build_started );
+            $this->log( 'Build output unchanged; nothing to deploy.' );
+            return true;
+        }
+
+        // Step 6: Create/update PR (only reached when something was pushed)
         if ( ! $this->create_pr( $repo_dir ) ) {
+            // Pushed to staging but PR creation failed. Do NOT advance the
+            // timestamp: a later run re-detects the change and retries the PR.
             return false;
         }
+
+        // Persist the build timestamp only after a successful push + PR.
+        $this->save_build_timestamp( $build_started );
 
         $this->log( '=========================================' );
         $this->log( 'Auto-deploy completed successfully' );
         $this->log( '=========================================' );
 
         return true;
+    }
+
+    /**
+     * Persist the last-build timestamp used for incremental change detection.
+     *
+     * @param string $timestamp ISO-8601 timestamp captured at build start.
+     */
+    private function save_build_timestamp( $timestamp ) {
+        file_put_contents( $this->timestamp_file, $timestamp );
+        $this->fix_permissions( $this->timestamp_file );
     }
 
     /**
@@ -177,7 +215,7 @@ class CPSD_Deployer {
                 AND post_status = 'publish'
                 AND post_modified_gmt > %s
                 ORDER BY post_modified_gmt DESC
-                LIMIT 100",
+                LIMIT 1000",
                 $last_build_mysql
             ) );
 
@@ -189,9 +227,27 @@ class CPSD_Deployer {
                 AND post_status = 'publish'
                 AND post_modified_gmt > %s
                 ORDER BY post_modified_gmt DESC
-                LIMIT 100",
+                LIMIT 1000",
                 $last_build_mysql
             ) );
+
+            // Detect content that left 'publish' since the last build (trashed,
+            // unpublished, or made private). Such pages still exist as stale
+            // files in the repo but are no longer in the change set, and
+            // clean_removed_content() only runs during a full rebuild. If any
+            // are found, force a full rebuild so the stale files are removed.
+            $removed_count = (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*)
+                FROM {$wpdb->posts}
+                WHERE post_type IN ('post','page')
+                AND post_status IN ('trash','draft','pending','private')
+                AND post_modified_gmt > %s",
+                $last_build_mysql
+            ) );
+
+            if ( $removed_count > 0 ) {
+                $this->log( sprintf( '%d item(s) left publish status since last build - forcing full rebuild to purge stale files', $removed_count ) );
+            }
 
             // Convert to URLs
             $post_urls = array();
@@ -221,6 +277,7 @@ class CPSD_Deployer {
                 'pages_count' => count( $page_urls ),
                 'total'       => count( $all_urls ),
                 'is_first_build' => $is_first_build,
+                'force_full'  => ( $removed_count > 0 ),
             );
         } catch ( \Exception $e ) {
             $this->log( 'Database query error: ' . $e->getMessage() );
@@ -277,6 +334,7 @@ class CPSD_Deployer {
             'pages_count' => count( $pages ),
             'total'       => count( $all_urls ),
             'is_first_build' => $is_first_build,
+            'force_full'  => false,
         );
     }
 
@@ -404,7 +462,8 @@ class CPSD_Deployer {
      * Assumes sync_repo_to_remote() has already been called before the pipeline ran.
      *
      * @param string $repo_dir Git repository directory.
-     * @return bool True on success.
+     * @return string|false 'pushed' on success, 'no_changes' if the build output
+     *                       was identical, or false on a git error.
      */
     private function git_commit_and_push( $repo_dir ) {
         $staging_branch    = $this->settings->get( 'git_staging_branch' );
@@ -422,7 +481,7 @@ class CPSD_Deployer {
 
         if ( 0 === $diff_exit ) {
             $this->log( 'No changes detected. Skipping deployment.' );
-            return false;
+            return 'no_changes';
         }
 
         // Generate change summary
@@ -468,7 +527,7 @@ class CPSD_Deployer {
             return false;
         }
 
-        return true;
+        return 'pushed';
     }
 
     /**
@@ -527,7 +586,33 @@ class CPSD_Deployer {
      * Check if a deploy is currently running.
      */
     public function is_running() {
-        return file_exists( $this->lock_file );
+        return file_exists( $this->lock_file ) && ! $this->is_lock_stale();
+    }
+
+    /**
+     * Determine whether an existing lock file is stale (left by a crashed run).
+     *
+     * Prefers process liveness via the recorded PID; falls back to lock age
+     * when the posix extension is unavailable. A full rebuild takes well under
+     * an hour, so a lock older than that with no live process is treated as dead.
+     *
+     * @return bool True if the lock can be safely cleared.
+     */
+    private function is_lock_stale() {
+        if ( ! file_exists( $this->lock_file ) ) {
+            return false;
+        }
+
+        $pid = (int) trim( (string) @file_get_contents( $this->lock_file ) );
+
+        if ( $pid > 0 && function_exists( 'posix_kill' ) ) {
+            // posix_kill($pid, 0) returns false (ESRCH) when no such process.
+            return ! posix_kill( $pid, 0 );
+        }
+
+        // No PID or no posix: treat a lock older than one hour as stale.
+        $age = time() - (int) @filemtime( $this->lock_file );
+        return $age > 3600;
     }
 
     /**
