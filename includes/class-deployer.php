@@ -113,7 +113,10 @@ class CPSD_Deployer {
         // Step 4: Run the processing pipeline
         $processor = new CPSD_Processor( $this->settings, array( $this, 'log' ) );
 
-        if ( ! $processor->run_pipeline( $build_dir, $repo_dir, $selective_urls ) ) {
+        // Full builds must contain every published post and page; selective builds the changed ones
+        $required_urls = ( null === $selective_urls ) ? $this->get_published_urls() : $changes['urls'];
+
+        if ( ! $processor->run_pipeline( $build_dir, $repo_dir, $selective_urls, $required_urls ) ) {
             $this->log( 'ERROR: Build pipeline failed' );
             return false;
         }
@@ -413,6 +416,14 @@ class CPSD_Deployer {
         $urls[] = $source_url . '/feed/';
         $urls[] = $source_url . '/feed/all.rss';
 
+        // Pages removed from the build by clean_wget_cache() must be fetched again,
+        // otherwise they are never refreshed by a selective build
+        $cache_pages = array_filter( array_map( 'trim', explode( ',', (string) $this->settings->get( 'cache_clean_pages' ) ) ) );
+        foreach ( $cache_pages as $page ) {
+            $page = preg_replace( '#(^|/)index\.html$#', '$1', $page );
+            $urls[] = $source_url . '/' . $page;
+        }
+
         // Extract years from changed post URLs and add year archives
         foreach ( $changed_urls as $url ) {
             if ( preg_match( '#/(\d{4})/#', $url, $matches ) ) {
@@ -420,8 +431,80 @@ class CPSD_Deployer {
             }
         }
 
+        // Add term archives and neighbouring posts, which display each changed post
+        foreach ( $changed_urls as $url ) {
+            $post_id = url_to_postid( $url );
+            if ( $post_id && 'post' === get_post_type( $post_id ) ) {
+                $urls = array_merge( $urls, $this->related_urls( $post_id ) );
+            }
+        }
+
         // Deduplicate
-        return array_unique( $urls );
+        return array_values( array_unique( $urls ) );
+    }
+
+    /**
+     * URLs of pages that show a post: its term archives (with ancestors) and its
+     * previous/next posts, overall and within each of its taxonomies.
+     *
+     * @param int $post_id Post ID.
+     * @return array URLs.
+     */
+    private function related_urls( $post_id ) {
+        global $post;
+        $saved_post = $post;
+        $post = get_post( $post_id ); // get_adjacent_post() reads the global post
+        $urls = array();
+
+        foreach ( get_object_taxonomies( $post, 'objects' ) as $taxonomy ) {
+            if ( ! $taxonomy->public || ! $taxonomy->rewrite ) {
+                continue;
+            }
+            $terms = wp_get_post_terms( $post_id, $taxonomy->name );
+            if ( is_wp_error( $terms ) ) {
+                continue;
+            }
+            foreach ( $terms as $term ) {
+                $term_ids = array_merge( array( $term->term_id ), get_ancestors( $term->term_id, $taxonomy->name, 'taxonomy' ) );
+                foreach ( $term_ids as $term_id ) {
+                    $link = get_term_link( (int) $term_id, $taxonomy->name );
+                    if ( ! is_wp_error( $link ) ) {
+                        $urls[] = $link;
+                    }
+                }
+            }
+            foreach ( array( true, false ) as $previous ) {
+                $adjacent = get_adjacent_post( true, '', $previous, $taxonomy->name );
+                if ( $adjacent ) {
+                    $urls[] = get_permalink( $adjacent );
+                }
+            }
+        }
+
+        foreach ( array( true, false ) as $previous ) {
+            $adjacent = get_adjacent_post( false, '', $previous );
+            if ( $adjacent ) {
+                $urls[] = get_permalink( $adjacent );
+            }
+        }
+
+        $post = $saved_post;
+
+        // /category/ archives are excluded from the full mirror and removed from the repo
+        return array_filter( $urls, function ( $url ) {
+            return false === strpos( $url, '/category/' );
+        } );
+    }
+
+    /**
+     * Permalinks of all published posts and pages.
+     *
+     * @return array URLs.
+     */
+    private function get_published_urls() {
+        global $wpdb;
+        $ids = $wpdb->get_col( "SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status = 'publish'" );
+        return array_filter( array_map( 'get_permalink', $ids ) );
     }
 
     /**

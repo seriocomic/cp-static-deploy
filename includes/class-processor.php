@@ -712,7 +712,7 @@ class CPSD_Processor {
      * @param array|null $selective_urls  URLs for selective build.
      * @return bool True on success.
      */
-    public function run_pipeline( $build_dir, $repo_dir, $selective_urls = null ) {
+    public function run_pipeline( $build_dir, $repo_dir, $selective_urls = null, $required_urls = array() ) {
         // 1. Clean build directory for full rebuilds to force fresh download
         if ( null === $selective_urls ) {
             $source_domain = $this->settings->get_source_domain();
@@ -721,6 +721,15 @@ class CPSD_Processor {
                 $this->log( 'Cleaning build directory for full rebuild...' );
                 exec( sprintf( 'rm -rf %s 2>/dev/null', escapeshellarg( $site_dir ) ) );
             }
+        } else {
+            // Remove cached copies of changed pages so a failed download
+            // cannot pass the check below with a file from an earlier build.
+            foreach ( $required_urls as $url ) {
+                $file = $this->build_file_for_url( $build_dir, $url );
+                if ( file_exists( $file ) ) {
+                    unlink( $file );
+                }
+            }
         }
 
         // 2. Clean wget cache
@@ -728,6 +737,26 @@ class CPSD_Processor {
 
         // 3. Mirror site
         if ( ! $this->mirror_site( $build_dir, $selective_urls ) ) {
+            return false;
+        }
+
+        // wget exits 8 on any HTTP error, which is accepted above, so check
+        // that every required page was actually saved before deploying.
+        $missing = $this->find_missing_pages( $build_dir, $required_urls );
+
+        // The crawl only finds linked pages. Fetch unlinked ones directly, or
+        // clean_removed_content() would delete them from the repo.
+        if ( $missing && null === $selective_urls ) {
+            $this->log( sprintf( '%d published page(s) not reached by the crawl; fetching directly...', count( $missing ) ) );
+            $this->mirror_site( $build_dir, $missing );
+            $missing = $this->find_missing_pages( $build_dir, $required_urls );
+        }
+
+        if ( $missing ) {
+            $this->log( sprintf( 'ERROR: %d required page(s) were not downloaded (check they load on the source site):', count( $missing ) ) );
+            foreach ( array_slice( $missing, 0, 20 ) as $url ) {
+                $this->log( "  missing: $url" );
+            }
             return false;
         }
 
@@ -779,6 +808,30 @@ class CPSD_Processor {
         }
 
         return true;
+    }
+
+    /**
+     * Map a source URL to the file wget saves it as (directory URLs become index.html).
+     */
+    private function build_file_for_url( $build_dir, $url ) {
+        $path = ltrim( (string) parse_url( $url, PHP_URL_PATH ), '/' );
+        if ( '' === $path || '/' === substr( $path, -1 ) ) {
+            $path .= 'index.html';
+        }
+        return $build_dir . '/' . $this->settings->get_source_domain() . '/' . $path;
+    }
+
+    /**
+     * URLs from the list that have no file in the build directory.
+     */
+    private function find_missing_pages( $build_dir, $urls ) {
+        $missing = array();
+        foreach ( $urls as $url ) {
+            if ( ! file_exists( $this->build_file_for_url( $build_dir, $url ) ) ) {
+                $missing[] = $url;
+            }
+        }
+        return $missing;
     }
 
     /**
